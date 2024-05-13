@@ -11,6 +11,15 @@ module Workflows
       attribute? :action,  Types::Strict::Symbol
       attribute :approval,  Types::Strict::Bool.default(false)
 
+      def initialize(data)
+        if data.key?(:action)
+          if [:approve, :reject].include?(data[:action])
+            raise DefinitionError, "Action name cannot be :approve or :reject"
+          end
+        end
+
+        super
+      end
       def self.parse(data)
         name = data[:name].to_sym
         new_attribs = data.merge({name: })
@@ -44,6 +53,7 @@ module Workflows
       attribute? :action,  Types::Strict::Symbol
       attribute :approval_state, Types::Strict::Symbol.default(:none)
       attribute :allowed_transitions, Types::Array.of(Workflows::Types::Transition).default { [] }
+      attribute :allowed_actions, Types::Array.of(Types::Strict::Symbol).default { [] }
 
       def self.parse(data)
         self.new(data)

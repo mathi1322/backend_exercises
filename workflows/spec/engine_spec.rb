@@ -93,6 +93,27 @@ describe "Workflow Test" do
       expect(entity.stage).to eq(:designed)
     end
 
+    it 'should provide all allowed actions' do
+      expect(entity.allowed_actions).to eq([:upload_design])
+      entity.execute(:upload_design)
+      expect(entity.allowed_actions).to eq([:update_supplier_quote])
+    end
+
+    it "should not have nil in allowed actions" do
+      stages = [
+        Workflows::Types::Stage.new(name: :created),
+        Workflows::Types::Stage.new(name: :designed, action: :upload_design),
+        Workflows::Types::Stage.new(name: :copied),
+      ]
+      @engine = Workflows::Engine.new
+                                 .with_stages(stages)
+                                 .with_transition(from: :created, to: :designed)
+                                 .with_transition(from: :created, to: :copied)
+                                 .begin_with(:created)
+
+      expect(entity.allowed_actions).to eq([:upload_design])
+    end
+
     it "should raise error if action does not exist" do
       expect{entity.execute(:x)}.to raise_error(Workflows::TransitionError, "Action x does not exist")
     end
@@ -154,6 +175,29 @@ describe "Workflow Test" do
         expect {
           entity.execute(:reject)
         }.to raise_error(Workflows::TransitionError)
+      end
+
+      it "should update to in_review when action executed again after rejection" do
+        entity.execute(:upload_design)
+        entity.execute(:update_supplier_quote)
+
+        entity.execute(:reject)
+        expect(entity.stage).to eq(:supplier_quotes_updated)
+        expect(entity.approval_state).to eq(:rejected)
+
+        entity.execute(:update_supplier_quote)
+        expect(entity.stage).to eq(:supplier_quotes_updated)
+        expect(entity.approval_state).to eq(:in_review)
+      end
+
+      it "should not allow any custom action to have name :approve or :reject" do
+        expect {
+          Workflows::Types::Stage.new(name: :designed, action: :approve)
+        }.to raise_error(Workflows::DefinitionError)
+
+        expect {
+          Workflows::Types::Stage.new(name: :designed, action: :reject)
+        }.to raise_error(Workflows::DefinitionError)
       end
     end
   end

@@ -4,8 +4,6 @@ module Workflows
   class Engine < Dry::Struct
     include Workflows::Meta
 
-    
-
     def start_phase(phase)
       raise TransitionError unless self.stages.empty?
       self.class.new(phase.attributes)
@@ -33,27 +31,24 @@ module Workflows
       end
 
       state = stage == conclusion ? :success : :in_progress
-      allowed_transitions = compute_allowed_transitions(stage)
-      entity.workflow_state.change(stage:, state:, allowed_transitions:)
+      allowed_transitions, allowed_actions = allowed_transitions_and_actions(stage)
+      entity.workflow_state.change(stage:, state:, allowed_transitions:, allowed_actions:)
     end
 
     def execute(entity, action)
-      return if entity.action == action
-
+      current_stage = entity.stage
       to_stage = stages.find { |s| s.action == action }
       raise TransitionError, "Action #{action} does not exist" if to_stage.nil?
 
-      current_stage = entity.stage
+      unless entity.approval_state == :rejected
+        return if entity.action == action
 
-      transition = transitions.find {|t| t.from == current_stage && t.to == to_stage.name }
+        transition = transitions.find {|t| t.from == current_stage && t.to == to_stage.name }
+        # normal transition action flow
+        raise TransitionError, "Action #{action} cannot be called now" if transition.nil?
+      end
 
-      # normal transition action flow
-      raise TransitionError, "Action #{action} cannot be called now" if transition.nil?
-
-      approval_state = to_stage.approval ? :in_review : :none
-      stage = to_stage.name
-      entity.workflow_state.change(stage:, action:, approval_state:)
-
+      update_workflow_state(entity, to_stage, action)
     end
 
     def approve(entity)
@@ -72,5 +67,11 @@ module Workflows
       entity.workflow_state.change(approval_state: action)
     end
 
+    def update_workflow_state(entity, to_stage, action)
+      approval_state = to_stage.approval ? :in_review : :none
+      stage = to_stage.name
+      allowed_transitions, allowed_actions = allowed_transitions_and_actions(stage)
+      entity.workflow_state.change(stage:, action:, approval_state:, allowed_transitions:, allowed_actions:)
+    end
   end
 end

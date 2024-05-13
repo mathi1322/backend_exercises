@@ -7,7 +7,7 @@ module Workflows
       @workflow_state = strategy.init_stage
     end
 
-    %i[state stage action allowed_transitions approval_state].each do |attribute|
+    %i[state stage action allowed_transitions allowed_actions approval_state].each do |attribute|
       delegate attribute, to: :workflow_state
     end
 
@@ -26,7 +26,6 @@ module Workflows
       end
       self
     end
-
 
     attr_reader :workflow_state
   end

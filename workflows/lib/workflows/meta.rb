@@ -15,8 +15,8 @@ module Workflows
 
     def init_stage
       stage = self.beginning
-      allowed_transitions = compute_allowed_transitions(stage)
-      Types::WorkflowState.new(stage:, state: :in_progress, allowed_transitions:)
+      allowed_transitions, allowed_actions = allowed_transitions_and_actions(stage)
+      Types::WorkflowState.new(stage:, state: :in_progress, allowed_transitions:, allowed_actions:)
     end
 
     def with_stage_names(new_names)
@@ -67,8 +67,10 @@ module Workflows
       @stage_names ||= stages.map(&:name)
     end
 
-    def compute_allowed_transitions(stage)
-      transitions.select { |transition| transition.from == stage }
+    def allowed_transitions_and_actions(stage)
+      allowed_transitions = transitions.select { |transition| transition.from == stage }
+      allowed_actions = allowed_transitions.map {|t| stages.find {|s| s.name == t.to }.action }.compact
+      [allowed_transitions, allowed_actions]
     end
 
     def new_instance(new_attribs)
