@@ -8,14 +8,18 @@ module Workflows
     class Stage < Dry::Struct
       include Comparable
       attribute :name, Types::Strict::Symbol
+      attribute? :action,  Types::Strict::Symbol
+      attribute :approval,  Types::Strict::Bool.default(false)
 
       def self.parse(data)
         name = data[:name].to_sym
-        self.new(data.merge(name:))
+        new_attribs = data.merge({name: })
+        new_attribs[:action] = data[:action].to_sym if data.key?(:action)
+        self.new(new_attribs)
       end
 
       def <=>(other)
-        [name] <=> [name]
+        [name, action, approval] <=> [name, action, approval]
       end
     end
 
@@ -23,8 +27,6 @@ module Workflows
       include Comparable
       attribute :from, Types::Strict::Symbol
       attribute :to, Types::Strict::Symbol
-      attribute? :action,  Types::Strict::Symbol
-      attribute? :approve_action,  Types::Strict::Symbol
 
       def self.parse(data)
         self.new(data)

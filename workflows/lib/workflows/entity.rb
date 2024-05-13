@@ -19,9 +19,14 @@ module Workflows
     end
 
     def execute(action, *)
-      @workflow_state = strategy.execute(self, action, *)
+      if %i[approve reject].include?(action)
+        @workflow_state = strategy.public_send(action, self)
+      else
+        @workflow_state = strategy.execute(self, action, *)
+      end
       self
     end
+
 
     attr_reader :workflow_state
   end

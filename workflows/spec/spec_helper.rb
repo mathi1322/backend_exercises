@@ -4,6 +4,7 @@ require 'dry-struct'
 
 require_relative '../lib/workflows/errors'
 require_relative '../lib/workflows/types'
+require_relative '../lib/workflows/meta'
 require_relative '../lib/workflows/entity'
 require_relative '../lib/workflows/engine'
 

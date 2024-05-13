@@ -11,6 +11,7 @@ describe "Workflow Test" do
                                  .with_transition(from: :d, to: :f)
                                  .with_transition(from: :e, to: :f)
                                  .with_transition(from: :f, to: :g)
+                                 .begin_with(:a)
                                  .conclude_at(:g)
     end
 
@@ -66,15 +67,21 @@ describe "Workflow Test" do
 
   context :actions do
     before(:each) do
-
-      stages = %i[created designed supplier_quotes_updated buyer_quote_confirmed sale_contract_prepared].map {|n| Workflows::Types::Stage.new(name: n)}
+      stages = [
+        Workflows::Types::Stage.new(name: :created),
+        Workflows::Types::Stage.new(name: :designed, action: :upload_design),
+        Workflows::Types::Stage.new(name: :supplier_quotes_updated, action: :update_supplier_quote, approval: true),
+        Workflows::Types::Stage.new(name: :buyer_quote_confirmed, action: :confirm_buyer_quote, approval: true),
+        Workflows::Types::Stage.new(name: :sale_contract_prepared, action: :prepare_sale_contract, approval: true),
+      ]
 
       @engine = Workflows::Engine.new
                                  .with_stages(stages)
-                                 .with_transition(from: :created, to: :designed, action: :upload_design)
-                                 .with_transition(from: :designed, to: :supplier_quotes_updated, action: :update_supplier_quote, approve_action: :approve_supplier_quote)
-                                 .with_transition(from: :supplier_quotes_updated, to: :buyer_quote_confirmed, action: :confirm_buyer_quote)
+                                 .with_transition(from: :created, to: :designed)
+                                 .with_transition(from: :designed, to: :supplier_quotes_updated)
+                                 .with_transition(from: :supplier_quotes_updated, to: :buyer_quote_confirmed)
                                  .with_transition(from: :buyer_quote_confirmed, to: :sale_contract_prepared)
+                                 .begin_with(:created)
                                  .conclude_at(:sale_contract_prepared)
     end
 
@@ -93,7 +100,7 @@ describe "Workflow Test" do
     it "should not raise error when called multiple time in sequence" do
       entity.execute(:upload_design)
       expect(entity.stage).to eq(:designed)
-      expect { entity.execute(:upload_design) }.not_to raise_error(Workflows::TransitionError)
+      expect { entity.execute(:upload_design) }.not_to raise_error
     end
 
     it "should raise error when an action called the second time but not in sequence" do
@@ -107,30 +114,57 @@ describe "Workflow Test" do
       expect { entity.execute(:confirm_buyer_quote) }.to raise_error(Workflows::TransitionError)
     end
 
-    it "should allow approval" do
-      entity.execute(:upload_design)
-      expect(entity.approval_state).to eq(:none)
-      expect(entity.stage).to eq(:designed)
+    context :approvals do
+      it "should allow approval" do
+        entity.execute(:upload_design)
+        expect(entity.approval_state).to eq(:none)
+        expect(entity.stage).to eq(:designed)
 
-      entity.execute(:update_supplier_quote)
-      expect(entity.approval_state).to eq(:in_review)
-      expect(entity.stage).to eq(:designed)
+        entity.execute(:update_supplier_quote)
+        expect(entity.approval_state).to eq(:in_review)
+        expect(entity.stage).to eq(:supplier_quotes_updated)
 
-      entity.execute(:approve_supplier_quote, false)
-      expect(entity.stage).to eq(:designed)
-      expect(entity.approval_state).to eq(:rejected)
+        entity.execute(:approve)
+        expect(entity.stage).to eq(:supplier_quotes_updated)
+        expect(entity.approval_state).to eq(:approved)
+      end
 
-      entity.execute(:approve_supplier_quote, true)
-      expect(entity.approval_state).to eq(:approved)
-      expect(entity.stage).to eq(:supplier_quotes_updated)
+      it "should allow rejection" do
+        entity.execute(:upload_design)
+        expect(entity.approval_state).to eq(:none)
+        expect(entity.stage).to eq(:designed)
+
+        entity.execute(:update_supplier_quote)
+        expect(entity.approval_state).to eq(:in_review)
+        expect(entity.stage).to eq(:supplier_quotes_updated)
+
+        entity.execute(:reject)
+        expect(entity.stage).to eq(:supplier_quotes_updated)
+        expect(entity.approval_state).to eq(:rejected)
+      end
+
+      it "should not allow approvals when there is none" do
+        entity.execute(:upload_design)
+        expect(entity.approval_state).to eq(:none)
+
+        expect {
+          entity.execute(:approve)
+        }.to raise_error(Workflows::TransitionError)
+
+        expect {
+          entity.execute(:reject)
+        }.to raise_error(Workflows::TransitionError)
+      end
     end
   end
- 
+
   context :validations do
     it "should not allow non-existent to stage in transitions" do
       engine = Workflows::Engine.new
                                 .with_stage_names(%i[a b])
                                 .with_transition(from: :a, to: :b)
+                                .begin_with(:a)
+                                .conclude_at(:b)
       expect {
         engine.with_transition(from: :a, to: :c)
       }.to raise_error("Stage c does not exist")
