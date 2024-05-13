@@ -1,0 +1,14 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gem 'debug'
+gem 'rspec'
+gem 'guard'
+gem 'guard-rspec'
+
+gem 'activesupport'
+
+
+gem 'dry-types'
+gem 'dry-struct'
