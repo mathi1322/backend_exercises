@@ -2,7 +2,14 @@ require 'debug'
 require 'dry-types'
 require 'dry-struct'
 
+require 'simplecov'
+SimpleCov.start do
+  add_filter '/spec/'
+end
+
 require_relative '../lib/merkensoft-workflows'
+
+
 
 
 RSpec.configure do |config|

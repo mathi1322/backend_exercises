@@ -12,3 +12,5 @@ gem 'activesupport'
 
 gem 'dry-types'
 gem 'dry-struct'
+
+gem 'simplecov', require: false, group: :test
