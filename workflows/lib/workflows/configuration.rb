@@ -2,7 +2,7 @@
 
 module Workflows
   include Dry.Types
-  module Meta
+  module Configuration
 
     def self.included(base)
       base.class_eval do
@@ -10,7 +10,17 @@ module Workflows
         attribute :transitions, Types::Array.of(Workflows::Types::Transition).default { [] }
         attribute? :conclusion, Types::Strict::Symbol
         attribute? :beginning, Types::Strict::Symbol
+
+        def self.parse(data)
+          stages = data[:stages].map { |sd|  Workflows::Types::Stage.parse(sd) }
+          transitions = data[:transitions].map { |td|  Workflows::Types::Transition.parse(td) }
+          hsh = data.merge(stages:, transitions:)
+          hsh[:conclusion] = hsh[:conclusion].to_sym if(hsh.key?(:conclusion))
+          hsh[:beginning] = hsh[:beginning].to_sym if(hsh.key?(:beginning))
+          self.new(hsh)
+        end
       end
+
     end
 
     def init_stage
@@ -30,11 +40,11 @@ module Workflows
     end
 
     def with_transitions(new_transitions)
-      transitions = [].concat(self.transitions, [new_transitions])
+      transitions = [].concat(self.transitions, new_transitions)
       new_instance(transitions:)
     end
 
-    def with_transition(from:, to:, action: nil)
+    def with_transition(from:, to:)
       [from, to].each do |stage|
         unless stage_names.include?(stage)
           raise TransitionError, "Stage #{stage} does not exist"
@@ -46,7 +56,6 @@ module Workflows
       end
 
       attributes = { from:, to: }
-      attributes[:action] = action if action
       transition = Types::Transition.parse(attributes)
       transitions = [].concat(self.transitions, [transition])
       new_instance(transitions:)
@@ -76,6 +85,9 @@ module Workflows
     def new_instance(new_attribs)
       attributes = self.attributes.merge(new_attribs)
       self.class.new(attributes)
+    rescue StandardError => ex
+      binding.b
+      raise ex
     end
 
     def circular_transition?(from, to)

@@ -2,11 +2,7 @@ require 'debug'
 require 'dry-types'
 require 'dry-struct'
 
-require_relative '../lib/workflows/errors'
-require_relative '../lib/workflows/types'
-require_relative '../lib/workflows/meta'
-require_relative '../lib/workflows/entity'
-require_relative '../lib/workflows/engine'
+require_relative '../lib/merkensoft-workflows'
 
 
 RSpec.configure do |config|

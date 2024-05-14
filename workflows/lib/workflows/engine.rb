@@ -2,53 +2,60 @@ module Workflows
   include Dry.Types
 
   class Engine < Dry::Struct
-    include Workflows::Meta
+    include Workflows::Configuration
 
-    def start_phase(phase)
-      raise TransitionError unless self.stages.empty?
-      self.class.new(phase.attributes)
-    end
+    def join_phase(phase)
+      self.class.new(phase.attributes) if self.stages.empty?
 
-    def join_phase(phase, join_action:)
-      raise TransitionError if self.stages.empty?
+      last_stage = self.conclusion
 
-      join_from = self.conclusion
+      join_froms = if last_stage.nil?
+                    self.unconcluded_stages.map(&:name)
+                  else
+                    [last_stage]
+                  end
       join_to = phase.beginning
-      self.with_stages(phase.stages)
-          .with_transition(from: join_from, to: join_to, action: join_action)
-          .with_transitions(phase.transitions)
-          .conclude_at(phase.conclusion)
+
+      join_transitions = join_froms.map do |join_from|
+        Workflows::Types::Transition.new(from: join_from, to: join_to)
+      end
+      transitions = [].concat(join_transitions, phase.transitions)
+
+      with_stages = self.with_stages(phase.stages)
+      with_transitions = with_stages.with_transitions(transitions) unless transitions.empty?
+      conclusion = phase.conclusion
+      conclusion.nil? ? with_transitions : with_transitions.conclude_at(conclusion)
     end
 
-    def move_to(entity, stage)
+    def move_to(present_state, stage)
       unless stage_names.include?(stage)
         raise TransitionError, "Invalid Stage #{stage}"
       end
 
-      intent = Types::Transition.new(from: entity.stage, to: stage)
+      intent = Types::Transition.new(from: present_state.stage, to: stage)
       if transitions.none? { |t| t == intent }
-        raise TransitionError, "Invalid Transition from #{entity.stage} to #{stage}"
+        raise TransitionError, "Invalid Transition from #{present_state.stage} to #{stage}"
       end
 
       state = stage == conclusion ? :success : :in_progress
       allowed_transitions, allowed_actions = allowed_transitions_and_actions(stage)
-      entity.workflow_state.change(stage:, state:, allowed_transitions:, allowed_actions:)
+      present_state.change(stage:, state:, allowed_transitions:, allowed_actions:)
     end
 
-    def execute(entity, action)
-      current_stage = entity.stage
+    def execute(present_state, action)
+      current_stage = present_state.stage
       to_stage = stages.find { |s| s.action == action }
       raise TransitionError, "Action #{action} does not exist" if to_stage.nil?
 
-      unless entity.approval_state == :rejected
-        return if entity.action == action
+      unless present_state.approval_state == :rejected
+        return if present_state.action == action
 
         transition = transitions.find {|t| t.from == current_stage && t.to == to_stage.name }
         # normal transition action flow
         raise TransitionError, "Action #{action} cannot be called now" if transition.nil?
       end
 
-      update_workflow_state(entity, to_stage, action)
+      update_workflow_state(present_state, to_stage, action)
     end
 
     def approve(entity)
@@ -60,18 +67,23 @@ module Workflows
     end
 
     private
-    def run_approval(entity, action)
-      stage_name = entity.stage
+
+    def unconcluded_stages
+      concluded_stage_names = transitions.map(&:to).uniq
+      self.stages.reject { |s| concluded_stage_names.include?(s.name) }
+    end
+    def run_approval(present_state, action)
+      stage_name = present_state.stage
       stage = stages.find { |s| s.name == stage_name }
       raise TransitionError, "Current stage #{stage_name} does not have approvals" unless stage.approval
-      entity.workflow_state.change(approval_state: action)
+      present_state.change(approval_state: action)
     end
 
-    def update_workflow_state(entity, to_stage, action)
+    def update_workflow_state(present_state, to_stage, action)
       approval_state = to_stage.approval ? :in_review : :none
       stage = to_stage.name
       allowed_transitions, allowed_actions = allowed_transitions_and_actions(stage)
-      entity.workflow_state.change(stage:, action:, approval_state:, allowed_transitions:, allowed_actions:)
+      present_state.change(stage:, action:, approval_state:, allowed_transitions:, allowed_actions:)
     end
   end
 end

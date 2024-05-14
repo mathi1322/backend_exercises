@@ -14,15 +14,15 @@ module Workflows
     attr_reader :strategy
 
     def transition_to!(to_state)
-      @workflow_state = strategy.move_to(self, to_state)
+      @workflow_state = strategy.move_to(@workflow_state, to_state)
       self
     end
 
     def execute(action, *)
       if %i[approve reject].include?(action)
-        @workflow_state = strategy.public_send(action, self)
+        @workflow_state = strategy.public_send(action, @workflow_state)
       else
-        @workflow_state = strategy.execute(self, action, *)
+        @workflow_state = strategy.execute(@workflow_state, action, *)
       end
       self
     end
