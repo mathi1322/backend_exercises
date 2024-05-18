@@ -177,6 +177,16 @@ describe "Workflow Test" do
         }.to raise_error(Workflows::TransitionError)
       end
 
+      it "should not allow transition without approval" do
+        entity.execute(:upload_design)
+        entity.execute(:update_supplier_quote)
+        expect(entity.approval_state).to eq(:in_review)
+        expect(entity.allowed_transitions).to be_empty
+        expect {
+          entity.execute(:confirm_buyer_quote)
+        }.to raise_error(Workflows::TransitionError)
+      end
+
       it "should update to in_review when action executed again after rejection" do
         entity.execute(:upload_design)
         entity.execute(:update_supplier_quote)

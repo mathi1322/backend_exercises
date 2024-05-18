@@ -85,9 +85,6 @@ module Workflows
     def new_instance(new_attribs)
       attributes = self.attributes.merge(new_attribs)
       self.class.new(attributes)
-    rescue StandardError => ex
-      binding.b
-      raise ex
     end
 
     def circular_transition?(from, to)

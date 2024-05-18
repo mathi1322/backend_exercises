@@ -43,8 +43,8 @@ module Workflows
       attribute :to, Types::Strict::Symbol
 
       def self.parse(data)
-        from = data[:from]
-        to = data[:to]
+        from = data[:from].to_sym
+        to = data[:to].to_sym
         attributes = {from:, to:}
         self.new(attributes)
       end
@@ -56,9 +56,9 @@ module Workflows
 
     class WorkflowState < Dry::Struct
       include Comparable
-      attribute :stage, Types::Strict::Symbol
       attribute :state, Types::Strict::Symbol
-      attribute? :action,  Types::Strict::Symbol
+      attribute :stage, Types::Strict::Symbol
+      attribute :phase, Types::Strict::Symbol.default(:main)
       attribute :approval_state, Types::Strict::Symbol.default(:none)
       attribute :allowed_transitions, Types::Array.of(Workflows::Types::Transition).default { [] }
       attribute :allowed_actions, Types::Array.of(Types::Strict::Symbol).default { [] }
@@ -70,6 +70,10 @@ module Workflows
         attributes[:allowed_transitions] = data[:allowed_transitions].map {|td| Workflows::Types::Transition.parse(td) }
         attributes[:allowed_actions] = data[:allowed_actions].map(&:to_sym)
         self.new(attributes)
+      end
+
+      def in_review?
+        approval_state == :in_review
       end
 
       def change(new_attributes)
