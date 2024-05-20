@@ -28,6 +28,7 @@ module Workflows
       conclusion.nil? ? with_transitions : with_transitions.conclude_at(conclusion)
     end
 
+
     def move_to(present_state, stage)
       unless stage_names.include?(stage)
         raise TransitionError, "Invalid Stage #{stage}"

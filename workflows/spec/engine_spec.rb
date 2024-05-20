@@ -240,4 +240,5 @@ describe "Workflow Test" do
       }.to raise_error("Circular transition detected")
     end
   end
+
 end
