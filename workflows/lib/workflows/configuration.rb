@@ -6,37 +6,28 @@ module Workflows
 
     def self.included(base)
       base.class_eval do
-        attribute :stages, Types::Array.of(Workflows::Types::Stage).default { [] }
         attribute :transitions, Types::Array.of(Workflows::Types::Transition).default { [] }
         attribute? :conclusion, Types::Strict::Symbol
         attribute? :beginning, Types::Strict::Symbol
 
         def self.parse(data)
-          stages = data[:stages].map { |sd|  Workflows::Types::Stage.parse(sd) }
           transitions = data[:transitions].map { |td|  Workflows::Types::Transition.parse(td) }
-          hsh = data.merge(stages:, transitions:)
+          hsh = data.merge(transitions:)
           hsh[:conclusion] = hsh[:conclusion].to_sym if(hsh.key?(:conclusion))
           hsh[:beginning] = hsh[:beginning].to_sym if(hsh.key?(:beginning))
           self.new(hsh)
         end
       end
+    end
 
+    def conclusion?(name)
+      self.conclusion == name
     end
 
     def init_stage
       stage = self.beginning
       allowed_transitions, allowed_actions = allowed_transitions_and_actions(stage)
       Types::WorkflowState.new(stage:, state: :in_progress, allowed_transitions:, allowed_actions:)
-    end
-
-    def with_stage_names(new_names)
-      new_stages = new_names.map { |n| Workflows::Types::Stage.new(name: n) }
-      with_stages(new_stages)
-    end
-
-    def with_stages(new_stages)
-      stages = [].concat(self.stages, new_stages)
-      new_instance(stages:)
     end
 
     def with_transitions(new_transitions)
@@ -69,6 +60,12 @@ module Workflows
       new_instance(beginning: stage)
     end
 
+    def allowed_transitions_and_actions(stage)
+      allowed_transitions = transitions.select { |transition| transition.from == stage }
+      allowed_actions = allowed_transitions.map {|t| stages.find {|s| s.name == t.to }.action }.compact
+      [allowed_transitions, allowed_actions]
+    end
+
     private
 
 
@@ -76,11 +73,7 @@ module Workflows
       @stage_names ||= stages.map(&:name)
     end
 
-    def allowed_transitions_and_actions(stage)
-      allowed_transitions = transitions.select { |transition| transition.from == stage }
-      allowed_actions = allowed_transitions.map {|t| stages.find {|s| s.name == t.to }.action }.compact
-      [allowed_transitions, allowed_actions]
-    end
+
 
     def new_instance(new_attribs)
       attributes = self.attributes.merge(new_attribs)

@@ -58,7 +58,7 @@ module Workflows
       include Comparable
       attribute :state, Types::Strict::Symbol
       attribute :stage, Types::Strict::Symbol
-      attribute :phase, Types::Strict::Symbol.default(:main)
+      attribute :phase, Types::Strict::Symbol
       attribute :approval_state, Types::Strict::Symbol.default(:none)
       attribute :allowed_transitions, Types::Array.of(Workflows::Types::Transition).default { [] }
       attribute :allowed_actions, Types::Array.of(Types::Strict::Symbol).default { [] }
