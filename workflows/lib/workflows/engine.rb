@@ -13,6 +13,23 @@ module Workflows
       new_instance(phases: new_phases)
     end
 
+    def with_transition(from:, to:)
+      [from, to].each do |name|
+        unless !!find_phase(name)
+          raise TransitionError, "Phase #{name} does not exist"
+        end
+      end
+
+      if circular_transition?(from, to)
+        raise TransitionError, "Circular transition detected"
+      end
+
+      attributes = { from:, to: }
+      transition = Types::Transition.parse(attributes)
+      transitions = self.transitions | [transition]
+      new_instance(transitions:)
+    end
+
     def begin_with(phase)
       new_instance(beginning: phase)
     end
@@ -28,46 +45,27 @@ module Workflows
       Types::WorkflowState.new(phase: first_phase.name, stage:, state: :in_progress, allowed_transitions:, allowed_actions:)
     end
 
-    def join_phase(phase)
-      return self.class.new(phase.attributes) if self.stages.empty?
-
-      last_stage = self.conclusion
-
-      join_froms = if last_stage.nil?
-                     self.unconcluded_stages.map(&:name)
-                   else
-                     [last_stage]
-                   end
-      join_to = phase.beginning
-
-      join_transitions = join_froms.map do |join_from|
-        Workflows::Types::Transition.new(from: join_from, to: join_to)
-      end
-
-      transitions = [].concat(join_transitions, phase.transitions)
-
-      with_stages = self.with_stages(phase.stages)
-      with_transitions = with_stages.with_transitions(transitions) unless transitions.empty?
-      conclusion = phase.conclusion
-      conclusion.nil? ? with_transitions : with_transitions.conclude_at(conclusion)
-    end
-
     def move_to(present_state, stage)
+
       unless stage_present?(stage)
         raise TransitionError, "Invalid Stage #{stage}"
       end
 
-      current_stage = present_state.stage
-      current_phase = phases.find { |p| p.include_stage?(present_state.stage) }
-      if current_phase.final_stage?(current_stage)
-        raise "Not implemented"
+      current_stage_name = present_state.stage
+      current_phase_name = present_state.phase
+      current_phase = find_phase(current_phase_name)
+      if current_phase.final_stage?(current_stage_name)
+        stages = joining_stages(current_phase_name)
+        raise TransitionError, "Stage #{stage} does not exist or invalid from #{current_stage_name}." if stages.empty?
+        to_stage = stages.find { |s| s.name == stage }
+        raise TransitionError, "Action #{action} does not exist or invalid from #{current_stage_name}." if to_stage.nil?
+        update_workflow_state(present_state, to_stage)
       else
-        unless current_phase.include_transition?(from: current_stage, to: stage)
-          raise TransitionError, "Invalid Transition from #{current_stage} to #{stage}"
+        unless current_phase.include_transition?(from: current_stage_name, to: stage)
+          raise TransitionError, "Invalid Transition from #{current_stage_name} to #{stage}"
         end
-        state = conclusion?(stage) ? :success : :in_progress
-        allowed_transitions, allowed_actions = current_phase.allowed_transitions_and_actions(stage)
-        present_state.change(stage:, state:, allowed_transitions:, allowed_actions:)
+        to = current_phase.find_stage(name: stage)
+        update_workflow_state(present_state, to)
       end
 
     end
@@ -77,9 +75,12 @@ module Workflows
       current_stage_name = present_state.stage
       current_phase_name = present_state.phase
       current_phase = find_phase(current_phase_name)
-
       if current_phase.final_stage?(current_stage_name)
-        raise "Not implemented"
+        stages = joining_stages(current_phase_name)
+        raise TransitionError, "Action #{action} does not exist or invalid from #{current_stage_name}." if stages.empty?
+        to_stage = stages.find { |s| s.action == action }
+        raise TransitionError, "Action #{action} does not exist or invalid from #{current_stage_name}." if to_stage.nil?
+        update_workflow_state(present_state, to_stage)
       else
         current_stage = current_phase.find_stage(name: current_stage_name)
 
@@ -94,7 +95,7 @@ module Workflows
           end
         end
 
-        update_workflow_state(present_state, to_stage, action)
+        update_workflow_state(present_state, to_stage)
       end
     end
 
@@ -127,6 +128,17 @@ module Workflows
       self.class.new(attributes)
     end
 
+    # TODO: refactor.. this is copied code from configuration.rb
+    def circular_transition?(from, to)
+      return true if from == to
+
+      transitions.select { |t| t.from == to }.each do |transition|
+        return true if circular_transition?(from, transition.to)
+      end
+
+      false
+    end
+
     # ################### ###################### ##############
 
     def run_approval(present_state, action)
@@ -138,14 +150,46 @@ module Workflows
       present_state.change(approval_state: action)
     end
 
-    def update_workflow_state(present_state, to_stage, action)
+    def update_workflow_state(present_state, to_stage)
       approval_state = to_stage.approval ? :in_review : :none
       stage = to_stage.name
       phase_name = to_stage.phase
+      action = to_stage.action
       phase = find_phase(phase_name)
-      # state = to_stage.name == conclusion ? :success : :in_progress
-      allowed_transitions, allowed_actions = to_stage.approval ? [[], []] : phase.allowed_transitions_and_actions(stage)
-      present_state.change(phase: phase_name, stage:, action:, approval_state:, allowed_transitions:, allowed_actions:)
+      allowed_transitions, allowed_actions = [[], []]
+      unless to_stage.approval && approval_state == :in_review
+        if phase.final_stage?(stage)
+          allowed_transitions = join_transitions(stage)
+          allowed_actions = join_actions(stage)
+        else
+          allowed_transitions, allowed_actions = to_stage.approval ? [[], []] : phase.allowed_transitions_and_actions(stage)
+        end
+      end
+      state = conclusion?(stage) ? :success : :in_progress
+      present_state.change(phase: phase_name, state:, stage:, action:, approval_state:, allowed_transitions:, allowed_actions:)
+    end
+
+    def join_transitions(from)
+      phase = phases.find { |p| p.include_stage?(from) }
+      joining_stages(phase.name)
+        .map { |to| Workflows::Types::Transition.new(from:, to: to.name) }
+    end
+
+    def join_actions(from)
+      phase = phases.find { |p| p.include_stage?(from) }
+      joining_stages(phase.name)
+        .map(&:action)
+    end
+
+    def joining_stages(phase_name)
+      next_phases(phase_name)
+        .map(&:begin_stage)
+    end
+
+    def next_phases(name)
+      transitions.select { |t| t.from == name }
+                 .map { |t| find_phase(t.to) }
+
     end
   end
 end

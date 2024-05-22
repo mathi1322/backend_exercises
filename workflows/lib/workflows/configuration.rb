@@ -37,6 +37,7 @@ module Workflows
 
     def with_transition(from:, to:)
       [from, to].each do |stage|
+        stage_names = stages.map(&:name)
         unless stage_names.include?(stage)
           raise TransitionError, "Stage #{stage} does not exist"
         end
@@ -60,6 +61,10 @@ module Workflows
       new_instance(beginning: stage)
     end
 
+    def begin_stage
+      stages.find {|s| s.name == beginning }
+    end
+
     def allowed_transitions_and_actions(stage)
       allowed_transitions = transitions.select { |transition| transition.from == stage }
       allowed_actions = allowed_transitions.map {|t| stages.find {|s| s.name == t.to }.action }.compact
@@ -67,11 +72,6 @@ module Workflows
     end
 
     private
-
-
-    def stage_names
-      @stage_names ||= stages.map(&:name)
-    end
 
 
 
