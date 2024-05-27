@@ -109,6 +109,18 @@ describe "Workflow Test" do
               .execute(:do_d3)
         expect(entity.state).to eq(:success)
       end
+
+      it "should not allow circular references in transitions" do
+        expect {
+          engine.with_transition(from: :D, to: :A)
+        }.to raise_error("Circular transition detected")
+      end
+
+      it "should find non-existent phase" do
+        expect {
+          engine.with_transition(from: :E, to: :C)
+        }.to raise_error("Phase E does not exist")
+      end
     end
 
   end

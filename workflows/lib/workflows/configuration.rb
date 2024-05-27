@@ -24,17 +24,6 @@ module Workflows
       self.conclusion == name
     end
 
-    def init_stage
-      stage = self.beginning
-      allowed_transitions, allowed_actions = allowed_transitions_and_actions(stage)
-      Types::WorkflowState.new(stage:, state: :in_progress, allowed_transitions:, allowed_actions:)
-    end
-
-    def with_transitions(new_transitions)
-      transitions = [].concat(self.transitions, new_transitions)
-      new_instance(transitions:)
-    end
-
     def with_transition(from:, to:)
       [from, to].each do |stage|
         stage_names = stages.map(&:name)

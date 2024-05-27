@@ -24,6 +24,7 @@ module Workflows
       def with_phase(phase)
         self.class.new(self.attributes.merge(phase:))
       end
+
       def self.parse(data)
         name = data[:name].to_sym
         phase = data[:phase].to_sym
