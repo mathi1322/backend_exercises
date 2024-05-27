@@ -1,155 +1,127 @@
+# frozen_string_literal: true
+
 describe "Workflow Test" do
 
   context :transitions do
-    before(:each) do
-      @engine = Workflows::Engine.new
-                                 .with_stage_names(%i[a b c d e f g])
-                                 .with_transition(from: :a, to: :b)
-                                 .with_transition(from: :a, to: :c)
-                                 .with_transition(from: :c, to: :d)
-                                 .with_transition(from: :b, to: :e)
-                                 .with_transition(from: :d, to: :f)
-                                 .with_transition(from: :e, to: :f)
-                                 .with_transition(from: :f, to: :g)
-                                 .conclude_at(:g)
+    %w[a b c d].each do |alph|
+      let("#{alph}_phase".to_sym) do
+        stages = [1, 2, 3].map do |n|
+          name = "#{alph}#{n}".to_sym
+          action = "do_#{name}".to_sym
+          Workflows::Types::Stage.new(name:, action:)
+        end
+        names = stages.map(&:name)
+        Workflows::Types::Phase.new(name: alph.upcase.to_sym)
+                               .with_stages(stages)
+                               .with_transition(from: names[0], to: names[1])
+                               .with_transition(from: names[1], to: names[2])
+                               .begin_with(names[0])
+                               .conclude_at(names[2])
+      end
+
     end
 
-    let(:engine) { @engine }
+    context :linear do
+      before(:each) do
+        @engine = Workflows::Engine.new
+                                   .with_phase(a_phase)
+                                   .with_phase(b_phase)
+                                   .begin_with(:A)
+                                   .conclude_at(:B)
+                                   .with_transition(from: :A, to: :B)
+      end
+      let(:engine) { @engine }
+      let(:entity) { Workflows::Entity.new.tap { |e| e.init(strategy: engine) } }
 
-    let(:entity) { Workflows::Entity.new.tap { |e| e.init(strategy: engine) } }
+      it "should transition from all unconcluded stages when there is no conclusion" do
+        x_phase = Workflows::Types::Phase.new(name: :X)
+                                         .with_stage_names(%i[x1 ucx2 x3 ucx4])
+                                         .with_transition(from: :x1, to: :ucx2)
+                                         .with_transition(from: :x1, to: :x3)
+                                         .with_transition(from: :x3, to: :ucx4)
+                                         .begin_with(:x1)
 
-    it "should initialize entity to the first stage" do
-      expect(entity.stage).to eq(:a)
+        engine = Workflows::Engine.new
+                                  .with_phase(x_phase)
+                                  .with_phase(b_phase)
+                                  .begin_with(:X)
+                                  .with_transition(from: :X, to: :B)
+                                  .conclude_at(:B)
+
+        entity = Workflows::Entity.new.tap { |e| e.init(strategy: engine) }
+        entity.transition_to!(:ucx2)
+              .transition_to!(:b1)
+              .execute(:do_b2)
+              .execute(:do_b3)
+
+        expect(entity.state).to eq(:success)
+
+        entity = Workflows::Entity.new.tap { |e| e.init(strategy: engine) }
+        entity.transition_to!(:x3)
+              .transition_to!(:ucx4)
+              .execute(:do_b1)
+              .execute(:do_b2)
+              .execute(:do_b3)
+
+        expect(entity.state).to eq(:success)
+
+      end
     end
 
-    it "should transition to b" do
-      entity.transition_to!(:b)
-      expect(entity.stage).to eq(:b)
-      expect(entity.state).to eq(:in_progress)
+    context :multi do
+      before(:each) do
+        @engine = Workflows::Engine.new
+                                   .with_phase(a_phase)
+                                   .with_phase(b_phase)
+                                   .with_phase(c_phase)
+                                   .with_phase(d_phase)
+                                   .begin_with(:A)
+                                   .conclude_at(:D)
+                                   .with_transition(from: :A, to: :B)
+                                   .with_transition(from: :A, to: :C)
+                                   .with_transition(from: :B, to: :D)
+                                   .with_transition(from: :C, to: :D)
+      end
+
+      let(:engine) { @engine }
+      let(:entity) { Workflows::Entity.new.tap { |e| e.init(strategy: engine) } }
+
+      it "should transition to D through B" do
+        entity.execute(:do_a2)
+              .execute(:do_a3)
+              .execute(:do_b1)
+              .execute(:do_b2)
+              .execute(:do_b3)
+              .execute(:do_d1)
+              .execute(:do_d2)
+              .execute(:do_d3)
+        expect(entity.state).to eq(:success)
+      end
+
+      it "should transition to D through C" do
+        entity.execute(:do_a2)
+              .execute(:do_a3)
+              .execute(:do_c1)
+              .execute(:do_c2)
+              .execute(:do_c3)
+              .execute(:do_d1)
+              .execute(:do_d2)
+              .execute(:do_d3)
+        expect(entity.state).to eq(:success)
+      end
+
+      it "should not allow circular references in transitions" do
+        expect {
+          engine.with_transition(from: :D, to: :A)
+        }.to raise_error("Circular transition detected")
+      end
+
+      it "should find non-existent phase" do
+        expect {
+          engine.with_transition(from: :E, to: :C)
+        }.to raise_error("Phase E does not exist")
+      end
     end
 
-    it "should also transition from a to b" do
-      entity.transition_to!(:c)
-      expect(entity.stage).to eq(:c)
-      expect(entity.state).to eq(:in_progress)
-    end
-
-    it "should not directly transition from a to e" do
-      expect {
-        entity.transition_to!(:e)
-      }.to raise_error(Workflows::TransitionError, "Invalid Transition from a to e")
-    end
-
-    it "should not transition to k" do
-      expect {
-        entity.transition_to!(:k)
-      }.to raise_error(Workflows::TransitionError, "Invalid Stage k")
-    end
-
-    it "should conclude at g" do
-      entity.transition_to!(:c)
-            .transition_to!(:d)
-            .transition_to!(:f)
-            .transition_to!(:g)
-      expect(entity.stage).to eq(:g)
-      expect(entity.state).to eq(:success)
-    end
-
-    it "should provide possible transitions at any state" do
-      expected = [
-        Workflows::Types::Transition.new(from: :a, to: :b),
-        Workflows::Types::Transition.new(from: :a, to: :c)
-      ]
-      expect(entity.allowed_transitions).to eq(expected)
-    end  
-  end
-
-  context :actions do
-    before(:each) do
-
-      stages = %i[created designed supplier_quotes_updated buyer_quote_confirmed sale_contract_prepared].map {|n| Workflows::Types::Stage.new(name: n)}
-
-      @engine = Workflows::Engine.new
-                                 .with_stages(stages)
-                                 .with_transition(from: :created, to: :designed, action: :upload_design)
-                                 .with_transition(from: :designed, to: :supplier_quotes_updated, action: :update_supplier_quote, approve_action: :approve_supplier_quote)
-                                 .with_transition(from: :supplier_quotes_updated, to: :buyer_quote_confirmed, action: :confirm_buyer_quote)
-                                 .with_transition(from: :buyer_quote_confirmed, to: :sale_contract_prepared)
-                                 .conclude_at(:sale_contract_prepared)
-    end
-
-    let(:engine) { @engine }
-    let(:entity) { Workflows::Entity.new.tap { |e| e.init(strategy: engine) } }
-
-    it "should use action :upload_design to transition to :designed" do
-      entity.execute(:upload_design)
-      expect(entity.stage).to eq(:designed)
-    end
-
-    it "should raise error if action does not exist" do
-      expect{entity.execute(:x)}.to raise_error(Workflows::TransitionError, "Action x does not exist")
-    end
-
-    it "should not raise error when called multiple time in sequence" do
-      entity.execute(:upload_design)
-      expect(entity.stage).to eq(:designed)
-      expect { entity.execute(:upload_design) }.not_to raise_error(Workflows::TransitionError)
-    end
-
-    it "should raise error when an action called the second time but not in sequence" do
-      entity.execute(:upload_design)
-      entity.execute(:update_supplier_quote)
-      expect { entity.execute(:upload_design) }.to raise_error(Workflows::TransitionError)
-    end
-
-    it "should raise error when an action called out of turn" do
-      entity.execute(:upload_design)
-      expect { entity.execute(:confirm_buyer_quote) }.to raise_error(Workflows::TransitionError)
-    end
-
-    it "should allow approval" do
-      entity.execute(:upload_design)
-      expect(entity.approval_state).to eq(:none)
-      expect(entity.stage).to eq(:designed)
-
-      entity.execute(:update_supplier_quote)
-      expect(entity.approval_state).to eq(:in_review)
-      expect(entity.stage).to eq(:designed)
-
-      entity.execute(:approve_supplier_quote, false)
-      expect(entity.stage).to eq(:designed)
-      expect(entity.approval_state).to eq(:rejected)
-
-      entity.execute(:approve_supplier_quote, true)
-      expect(entity.approval_state).to eq(:approved)
-      expect(entity.stage).to eq(:supplier_quotes_updated)
-    end
-  end
- 
-  context :validations do
-    it "should not allow non-existent to stage in transitions" do
-      engine = Workflows::Engine.new
-                                .with_stage_names(%i[a b])
-                                .with_transition(from: :a, to: :b)
-      expect {
-        engine.with_transition(from: :a, to: :c)
-      }.to raise_error("Stage c does not exist")
-      expect {
-        engine.with_transition(from: :x, to: :b)
-      }.to raise_error("Stage x does not exist")
-    end
-
-    it "should not allow circular references in transitions" do
-      engine = Workflows::Engine.new
-                                .with_stage_names(%i[a b c d e])
-                                .with_transition(from: :a, to: :b)
-                                .with_transition(from: :a, to: :c)
-                                .with_transition(from: :b, to: :e)
-                                .with_transition(from: :c, to: :d)
-                                .with_transition(from: :d, to: :b)
-      expect {
-        engine.with_transition(from: :e, to: :c)
-      }.to raise_error("Circular transition detected")
-    end
   end
 end

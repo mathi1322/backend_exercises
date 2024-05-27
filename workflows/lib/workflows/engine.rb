@@ -2,31 +2,21 @@ module Workflows
   include Dry.Types
 
   class Engine < Dry::Struct
-    attribute :stages, Types::Array.of(Workflows::Types::Stage).default { [] }
+    # include Workflows::Configuration
+    attribute :phases, Types::Array.of(Workflows::Types::Phase).default { [] }
     attribute :transitions, Types::Array.of(Workflows::Types::Transition).default { [] }
+    attribute? :beginning, Types::Strict::Symbol
     attribute? :conclusion, Types::Strict::Symbol
 
-    def init_stage
-      stage = stages.first.name
-      allowed_transitions = compute_allowed_transitions(stage)
-      Types::WorkflowState.new(stage:, state: :in_progress, allowed_transitions:)
+    def with_phase(phase)
+      new_phases = phases | [phase]
+      new_instance(phases: new_phases)
     end
 
-
-    def with_stage_names(new_names)
-      new_stages = new_names.map {|n| Workflows::Types::Stage.new(name: n)}
-      with_stages(new_stages)
-    end
-
-    def with_stages(new_stages)
-      stages = [].concat(self.stages, new_stages)
-      new_instance(stages:)
-    end
-
-    def with_transition(from:, to:, action: nil, approve_action: nil)
-      [from, to].each do |stage|
-        unless stage_names.include?(stage)
-          raise TransitionError, "Stage #{stage} does not exist" 
+    def with_transition(from:, to:)
+      [from, to].each do |name|
+        unless !!find_phase(name)
+          raise TransitionError, "Phase #{name} does not exist"
         end
       end
 
@@ -34,81 +24,111 @@ module Workflows
         raise TransitionError, "Circular transition detected"
       end
 
-      attributes = {from:, to:}
-      attributes[:action] = action if action
-      attributes[:approve_action] = approve_action if approve_action
+      attributes = { from:, to: }
       transition = Types::Transition.parse(attributes)
-      transitions = [].concat(self.transitions, [transition])
+      transitions = self.transitions | [transition]
       new_instance(transitions:)
     end
 
-    def conclude_at(stage)
-      new_instance(conclusion: stage)
+    def begin_with(phase)
+      new_instance(beginning: phase)
     end
 
-
-    def move_to(entity, stage)
-      unless stage_names.include?(stage)
-        raise TransitionError, "Invalid Stage #{stage}" 
-      end
-
-      intent = Types::Transition.new(from: entity.stage, to: stage)
-      if transitions.none? {|t| t == intent }
-        raise TransitionError, "Invalid Transition from #{entity.stage} to #{stage}"
-      end
-
-      state = stage == conclusion ? :success : :in_progress
-      allowed_transitions = compute_allowed_transitions(stage)
-      entity.workflow_state.change(stage:, state:, allowed_transitions:)
+    def conclude_at(phase)
+      new_instance(conclusion: phase)
     end
 
-    def execute(entity, action, *params)
-      return if entity.action == action
+    def init_stage
+      first_phase = find_phase(self.beginning)
+      stage = first_phase.beginning
+      allowed_transitions, allowed_actions = first_phase.allowed_transitions_and_actions(stage)
+      Types::WorkflowState.new(phase: first_phase.name, stage:, state: :in_progress, allowed_transitions:, allowed_actions:)
+    end
 
-      transition = transitions.find { |t| t.action == action }
+    def move_to(present_state, stage)
 
-      if transition.nil?
-        if approve_action?(action) # approval action flow
-          run_approval(entity, action, *params) 
-        else
-          raise TransitionError, "Action #{action} does not exist" if transition.nil?
+      unless stage_present?(stage)
+        raise TransitionError, "Invalid Stage #{stage}"
+      end
+
+      current_stage_name = present_state.stage
+      current_phase_name = present_state.phase
+      current_phase = find_phase(current_phase_name)
+      if current_phase.final_stage?(current_stage_name)
+        stages = joining_stages(current_phase_name)
+        raise TransitionError, "Stage #{stage} does not exist or invalid from #{current_stage_name}." if stages.empty?
+        to_stage = stages.find { |s| s.name == stage }
+        raise TransitionError, "Action #{action} does not exist or invalid from #{current_stage_name}." if to_stage.nil?
+        update_workflow_state(present_state, to_stage)
+      else
+        unless current_phase.include_transition?(from: current_stage_name, to: stage)
+          raise TransitionError, "Invalid Transition from #{current_stage_name} to #{stage}"
         end
-      else # normal transition action flow
-        raise TransitionError, "Action #{action} cannot be called now" if transition.from != entity.stage
+        to = current_phase.find_stage(name: stage)
+        update_workflow_state(present_state, to)
+      end
 
-        approval_state = transition.approve_action ? :in_review : :none
-        stage =  transition.approve_action ? entity.stage : transition.to
-        entity.workflow_state.change(stage:, action:, approval_state:)
+    end
+
+    def execute(present_state, action)
+      raise TransitionError, "Action #{action} cannot be performed while waiting for approval" if present_state.in_review?
+      current_stage_name = present_state.stage
+      current_phase_name = present_state.phase
+      current_phase = find_phase(current_phase_name)
+      if current_phase.final_stage?(current_stage_name)
+        stages = joining_stages(current_phase_name)
+        raise TransitionError, "Action #{action} does not exist or invalid from #{current_stage_name}." if stages.empty?
+        to_stage = stages.find { |s| s.action == action }
+        raise TransitionError, "Action #{action} does not exist or invalid from #{current_stage_name}." if to_stage.nil?
+        update_workflow_state(present_state, to_stage)
+      else
+        current_stage = current_phase.find_stage(name: current_stage_name)
+
+        to_stage = current_phase.find_stage(action:)
+        raise TransitionError, "Action #{action} does not exist" if to_stage.nil?
+
+        unless present_state.approval_state == :rejected
+          return if current_stage.action == action
+          # normal transition action flow
+          unless current_phase.include_transition?(from: current_stage_name, to: to_stage.name)
+            raise TransitionError, "Action #{action} cannot be called now"
+          end
+        end
+
+        update_workflow_state(present_state, to_stage)
       end
     end
 
-    def run_approval(entity, action, *params)
-      is_approved = params.first
-      transition = transitions.find { |t| t.approve_action == action }
-      approval_state = is_approved ? :approved : :rejected
-      stage = approval_state == :rejected ? entity.stage : transition.to
-      entity.workflow_state.change(stage:, approval_state:)
+    def approve(entity)
+      run_approval(entity, :approved)
+    end
+
+    def reject(entity)
+      run_approval(entity, :rejected)
     end
 
     private
 
-    def approve_action?(action)
-      transitions.any? { |t| t.approve_action == action }
+    def conclusion?(stage_name)
+      phase = phases.find { |p| p.include_stage?(stage_name) }
+      phase.name == self.conclusion && phase.conclusion?(stage_name)
     end
 
-    def stage_names
-      @stage_names ||= stages.map(&:name)
+    def stage_present?(name)
+      phases.any? { |p| p.include_stage?(name) }
     end
 
-    def compute_allowed_transitions(stage)
-      transitions.select { |transition| transition.from == stage }
+    def find_phase(name)
+      phases.find { |p| p.name == name }
     end
 
+    # ################### possible common methods ##############
     def new_instance(new_attribs)
       attributes = self.attributes.merge(new_attribs)
       self.class.new(attributes)
     end
 
+    # TODO: refactor.. this is copied code from configuration.rb
     def circular_transition?(from, to)
       return true if from == to
 
@@ -117,6 +137,59 @@ module Workflows
       end
 
       false
+    end
+
+    # ################### ###################### ##############
+
+    def run_approval(present_state, action)
+      stage_name = present_state.stage
+      phase_name = present_state.phase
+      phase = find_phase(phase_name)
+      stage = phase.find_stage(name: stage_name)
+      raise TransitionError, "Current stage #{stage_name} does not have approvals" unless stage.approval
+      present_state.change(approval_state: action)
+    end
+
+    def update_workflow_state(present_state, to_stage)
+      approval_state = to_stage.approval ? :in_review : :none
+      stage = to_stage.name
+      phase_name = to_stage.phase
+      action = to_stage.action
+      phase = find_phase(phase_name)
+      allowed_transitions, allowed_actions = [[], []]
+      unless to_stage.approval && approval_state == :in_review
+        if phase.final_stage?(stage)
+          allowed_transitions = join_transitions(stage)
+          allowed_actions = join_actions(stage)
+        else
+          allowed_transitions, allowed_actions = to_stage.approval ? [[], []] : phase.allowed_transitions_and_actions(stage)
+        end
+      end
+      state = conclusion?(stage) ? :success : :in_progress
+      present_state.change(phase: phase_name, state:, stage:, action:, approval_state:, allowed_transitions:, allowed_actions:)
+    end
+
+    def join_transitions(from)
+      phase = phases.find { |p| p.include_stage?(from) }
+      joining_stages(phase.name)
+        .map { |to| Workflows::Types::Transition.new(from:, to: to.name) }
+    end
+
+    def join_actions(from)
+      phase = phases.find { |p| p.include_stage?(from) }
+      joining_stages(phase.name)
+        .map(&:action)
+    end
+
+    def joining_stages(phase_name)
+      next_phases(phase_name)
+        .map(&:begin_stage)
+    end
+
+    def next_phases(name)
+      transitions.select { |t| t.from == name }
+                 .map { |t| find_phase(t.to) }
+
     end
   end
 end
